@@ -15,7 +15,6 @@ Equation = NamedTuple('Equation', [
 ])
 
 
-# TODO: accept interval computation and match: =SUM(A1:5)/B1
 class CellFormula:
     pattern = r"^=<OP>\(?<CE>\)?\(?(?:[\+\-\*\/\^]<OP>\(?<CE>\)*)+$"\
         .replace('<OP>', r'(?:(?:DIV|MUL|SUB|SUM)(?=\([A-Z]\d+(?::\d+){1,2}\)))?')\
@@ -63,7 +62,8 @@ class CellFormula:
                     cell.pop(start)
                 cell.insert(start, sub_equation)
                 break
-        self.formula = cell[0]
+        self.formula: Equation = cell[0]
+        self.value = None
 
     @classmethod
     def tokerise_setence(cls, setence: str) -> List[str]:
@@ -75,7 +75,7 @@ class CellFormula:
         Returns:
             List[str]: tokens
         """
-        pattern = r'<CE>|([\+\-\*\/\^])|(\(?\)?)|(SUM|SUB|MUL|DIV)\(<CE>\)' \
+        pattern = r'<CE>|([\+\-\*\/\^])|(\(?\)?)|(SUM|SUB|MUL|DIV)\(<CE>\)|(\d+)' \
             .replace('<CE>', r'([A-Z]\d(?::\d){0,2})')
         pattern = re.compile(pattern)
         setence = [el for el in pattern.split(setence) if el and el != '=']
@@ -116,7 +116,7 @@ class CellFormula:
         term_gen = cls.get_interval(term)
         equation = Equation(next(term_gen), next(term_gen), operator)
         for t in term_gen:
-            equation = Equation(t, equation, cls.op_dict[operator])
+            equation = Equation(t, equation, operator)
         return equation
 
     @classmethod
@@ -130,7 +130,7 @@ class CellFormula:
         Returns:
             Equation: The hole equation
         """
-        pattern = re.compile(r'[A-Z]\d+')
+        pattern = re.compile(r'(?:[A-Z]\d+)|\d+')
         for op in cls.op_dict:
             for _ in range(tokens.count(op)):
                 index_op = tokens.index(op)
@@ -138,13 +138,18 @@ class CellFormula:
                 if len(op) > 1:
                     tokens.insert(
                         index_op + 1,
-                        CellFormula.map_operator(tokens.pop(index_op + 1), op)
+                        CellFormula.map_operator(
+                            tokens.pop(index_op + 1),
+                            cls.op_dict[op]
+                        )
                     )
                     tokens.pop(index_op)
                     continue
 
                 term1 = tokens[index_op - 1]
                 term2 = tokens[index_op + 1]
+                term1 = int(term1) if isinstance(term1, str) and term1.isdecimal() else term1
+                term2 = int(term2) if isinstance(term2, str) and term2.isdecimal() else term2
 
                 if isinstance(term1, str) and not pattern.match(term1):
                     raise ValueError()
@@ -157,8 +162,68 @@ class CellFormula:
                 tokens.insert(index_op - 1, Equation(term1, term2, cls.op_dict[op]))
         return tokens[0]
 
-    def compute(self, sheet: Dict[str, Any]) -> int:
-        ...
+    def compute(self, sheet: Dict[str, Any], call_stack=None) -> int:
+        call_stack = call_stack if call_stack else []
+        if self in call_stack:
+            return "Cyclic recursion ("
+
+        current_equation = self.formula
+        equation_stack = list()
+        result = 0
+        while True:
+            term1 = current_equation.term1
+            term2 = current_equation.term2
+            operator = current_equation.op
+            if isinstance(term1, Equation):
+                equation_stack.append(Equation(
+                    term1=None, term2=term2, op=operator
+                ))
+                current_equation = term1
+                continue
+            elif isinstance(term2, Equation):
+                equation_stack.append(Equation(
+                    term1=term1, term2=None, op=operator
+                ))
+                current_equation = term2
+                continue
+
+            term1 = sheet[term1] if isinstance(term1, str) else term1
+            term2 = sheet[term2] if isinstance(term2, str) else term2
+
+            if isinstance(term1, self.__class__):
+                term1 = term1.compute(sheet, call_stack + [self])
+                if isinstance(term1, str):
+                    if len(call_stack) > 0:
+                        return f'{term1} {current_equation.term1} <-'
+                    else:
+                        first_cell = term1.split(' ')[3]
+                        raise RecursionError(f'{term1} {current_equation.term1} <- {first_cell} )')
+            elif isinstance(term2, self.__class__):
+                term2 = term2.compute(sheet, call_stack + [self])
+                if isinstance(term2, str):
+                    if len(call_stack) > 0:
+                        return f'{term2} {current_equation.term2} <-'
+                    else:
+                        first_cell = term2.split(' ')[3]
+                        raise RecursionError(f'{term2} {current_equation.term2} <- {first_cell} )')
+
+            result = operator(int(term1), int(term2))
+            if len(equation_stack) > 0:
+                term1, term2, operator = equation_stack.pop(-1)
+                term1 = term1 if term1 else result
+                term2 = term2 if term2 else result
+                current_equation = Equation(term1, term2, operator)
+                continue
+            else:
+                break
+        self.value = result
+        return result
+
+    def __repr__(self) -> str:
+        if self.value:
+            return '='+str(self.value)
+        else:
+            return self.setence
 
 
 CellType = Union[str, int, CellFormula]
@@ -255,6 +320,10 @@ def main():
     if not os.path.exists(path):
         sys.exit(1)
     sheet = read_csv(path)
+    for el in sheet.values():
+        if not isinstance(el, CellFormula):
+            continue
+        el.compute(sheet)
     print(sheet)
 
 
