@@ -1,6 +1,6 @@
 from typing import Any, List, Dict, NamedTuple, NoReturn, Union, Tuple, Callable
-from string import ascii_uppercase
 from operator import add, sub, mul, truediv as div
+from string import ascii_uppercase
 # from collections import deque
 # import curses
 import sys
@@ -16,13 +16,10 @@ Equation = NamedTuple('Equation', [
 
 
 # TODO: accept interval computation and match: =SUM(A1:5)/B1
-# TODO: Make the RegEx Match more accurat
 class CellFormula:
-    pattern = r"^=<OP>\(?<CE>\)?\(?(?:(?:[\+\-\*\/\^]|<OP>)\(?<CE>\)?)+\)*$"
-    operations_pattern = r'(?:SUM|SUB|DIV|MUL|NEV|)?'
-    cell_terms = re.compile(r"([A-Z]\d+(?:\d+){0,2}|\d+)")
-    pattern = pattern.replace("<CE>", cell_terms.pattern)
-    pattern = pattern.replace("<OP>", operations_pattern)
+    pattern = r"^=<OP>\(?<CE>\)?\(?(?:[\+\-\*\/\^]<OP>\(?<CE>\)*)+$"\
+        .replace('<OP>', r'(?:(?:DIV|MUL|SUB|SUM)(?=\([A-Z]\d+(?::\d+){1,2}\)))?')\
+            .replace('<CE>', r'(?:[A-Z]\d+(?::\d+){0,2}|\d+)')
     pattern = re.compile(pattern)
 
     op_dict = {
@@ -47,6 +44,9 @@ class CellFormula:
 
         cell = CellFormula.tokerise_setence(cell)
 
+        # TODO: More performance jumping to each '()' pair
+        # using RegEx or simple scan instead of stepping through
+        # the sentence, character by character?
         for start in range(len(cell) - 1, -1, -1):
             if cell[start] != '(' and start > 0:
                 continue
@@ -64,17 +64,23 @@ class CellFormula:
                 cell.insert(start, sub_equation)
                 break
         self.formula = cell[0]
-        print(self.formula)
 
     @classmethod
     def tokerise_setence(cls, setence: str) -> List[str]:
+        """Given an setence, break it down in to a list.
+
+        Args:
+            setence (str)
+
+        Returns:
+            List[str]: tokens
+        """
         pattern = r'<CE>|([\+\-\*\/\^])|(\(?\)?)|(SUM|SUB|MUL|DIV)\(<CE>\)' \
             .replace('<CE>', r'([A-Z]\d(?::\d){0,2})')
         pattern = re.compile(pattern)
         setence = [el for el in pattern.split(setence) if el and el != '=']
         return setence
 
-    # FIXME: Finish this!!! I stoped here...
     @staticmethod
     def get_interval(term: str):
         """Get the size of the interval.
@@ -83,38 +89,72 @@ class CellFormula:
 
         Args:
             term (str): The term
-        
+
         Yield:
             int: The term.
         """
-        start = re.search(r'[A-Z](\d+)', term).group()
-        end = re.search(r'[A-Z]\d+:(\d+)', term).group()
-        inc = re.search(r'[A-Z]\d+:\d+:(\d+)', term)
-        inc = 1 if not inc else inc
+        start = int(re.match(r'^[A-Z](\d+):\d+.*', term).group(1))
+        end = int(re.match(r'^[A-Z]\d+:(\d+).*', term).group(1))
+        inc = re.match(r'^[A-Z]\d+:\d+:(\d+)', term)
+        inc = 1 if not inc else inc.group(1)
         col = term[0]
-        return [f'{col}{x}' for x in range(start, end + 1, inc)]
+        for row_index in range(start, end + 1, inc):
+            yield f'{col}{row_index}'
 
+    @classmethod
+    def map_operator(cls, term: str, operator: Callable[[str, Any], int]) -> Equation:
+        """Given an term that describes an interval, generate that interval (get_interval)
+        and map the operator, joining them together and generating the hole equation.
+
+        Args:
+            term (str): The term
+            operator (Callable[[str, Any], int]): The operation
+
+        Returns:
+            Equation: The chain of equations joined.
+        """
+        term_gen = cls.get_interval(term)
+        equation = Equation(next(term_gen), next(term_gen), operator)
+        for t in term_gen:
+            equation = Equation(t, equation, cls.op_dict[operator])
+        return equation
 
     @classmethod
     def parse_tokens(cls, tokens: List[str]) -> Equation:
-        for op in cls.op_dict.keys():
-            if len(op) > 1:
-                try:
-                    ...
-                except ValueError:
-                    break
+        """Given the tokens, generate the hole equation, and also
+        do it recusrivly over intervals using the map_operator.
+
+        Args:
+            tokens (List[str]): The tokens.
+
+        Returns:
+            Equation: The hole equation
+        """
+        pattern = re.compile(r'[A-Z]\d+')
+        for op in cls.op_dict:
             for _ in range(tokens.count(op)):
-                try:
-                    index_op = tokens.index(op)
-                    term1 = tokens[index_op - 1]
-                    term2 = tokens[index_op + 1]
-                    equation = Equation(term1, term2, cls.op_dict[op])
-                    tokens.pop(index_op - 1) # Delete the term 1
-                    tokens.pop(index_op - 1) # Delete the operator
-                    tokens.pop(index_op - 1) # Delete the term 2
-                    tokens.insert(index_op - 1, equation) # Insert the equation
-                except ValueError:
-                    break
+                index_op = tokens.index(op)
+
+                if len(op) > 1:
+                    tokens.insert(
+                        index_op + 1,
+                        CellFormula.map_operator(tokens.pop(index_op + 1), op)
+                    )
+                    tokens.pop(index_op)
+                    continue
+
+                term1 = tokens[index_op - 1]
+                term2 = tokens[index_op + 1]
+
+                if isinstance(term1, str) and not pattern.match(term1):
+                    raise ValueError()
+                if isinstance(term2, str) and not pattern.match(term2):
+                    raise ValueError()
+
+                tokens.pop(index_op - 1) # Delete the term 1
+                tokens.pop(index_op - 1) # Delete the operator
+                tokens.pop(index_op - 1) # Delete the term 2
+                tokens.insert(index_op - 1, Equation(term1, term2, cls.op_dict[op]))
         return tokens[0]
 
     def compute(self, sheet: Dict[str, Any]) -> int:
@@ -163,6 +203,14 @@ def coord2index(coord:str) -> Tuple[int, int]:
 
 
 def read_csv(path: str) -> SheetType:
+    """Read the CSV and generates the Table (sheet).
+
+    Args:
+        path (str)
+
+    Returns:
+        Sheet
+    """
     with open(path, 'r') as csv_file:
         content = csv_file.readlines()
     sheet = dict()
@@ -207,6 +255,7 @@ def main():
     if not os.path.exists(path):
         sys.exit(1)
     sheet = read_csv(path)
+    print(sheet)
 
 
 if __name__ == '__main__':
