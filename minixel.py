@@ -1,7 +1,6 @@
 from typing import Any, List, Dict, NamedTuple, NoReturn, Union, Tuple, Callable
 from operator import add, sub, mul, truediv as div
 from string import ascii_uppercase
-# from collections import deque
 # import curses
 import sys
 import os
@@ -43,9 +42,6 @@ class CellFormula:
 
         cell = CellFormula.tokerise_setence(cell)
 
-        # TODO: More performance jumping to each '()' pair
-        # using RegEx or simple scan instead of stepping through
-        # the sentence, character by character?
         for start in range(len(cell) - 1, -1, -1):
             if cell[start] != '(' and start > 0:
                 continue
@@ -162,6 +158,21 @@ class CellFormula:
                 tokens.insert(index_op - 1, Equation(term1, term2, cls.op_dict[op]))
         return tokens[0]
 
+    def get_value(self, sheet: Dict[str, Any], call_stack=None) -> int:
+        """Get the value, and if the value is'nt computed yet, it will be
+        computed right on the way.
+
+        Args:
+            sheet (Dict[str, Any]): The table sheet
+            call_stack (List, optional): The list of call_stack. Defaults to None.
+
+        Returns:
+            int: The value (computed or not).
+        """
+        if not self.value:
+            return self.compute(sheet, call_stack)
+        return self.value
+
     def compute(self, sheet: Dict[str, Any], call_stack=None) -> int:
         call_stack = call_stack if call_stack else []
         if self in call_stack:
@@ -171,51 +182,59 @@ class CellFormula:
         equation_stack = list()
         result = 0
         while True:
-            term1 = current_equation.term1
-            term2 = current_equation.term2
+            terms: List[Union[str, Equation]] = [
+                current_equation.term1,
+                current_equation.term2
+            ]
             operator = current_equation.op
-            if isinstance(term1, Equation):
-                equation_stack.append(Equation(
-                    term1=None, term2=term2, op=operator
-                ))
-                current_equation = term1
-                continue
-            elif isinstance(term2, Equation):
-                equation_stack.append(Equation(
-                    term1=term1, term2=None, op=operator
-                ))
-                current_equation = term2
-                continue
 
-            term1 = sheet[term1] if isinstance(term1, str) else term1
-            term2 = sheet[term2] if isinstance(term2, str) else term2
+            for indx in range(2):
+                # In case if one of the terms was an Equation...
+                if isinstance(terms[indx], Equation):
+                    term1, term2 = terms
+                    term1 = None if indx == 0 else term1
+                    term2 = None if indx == 1 else term2
+                    equation_stack.append(Equation(
+                        term1, term2, op=current_equation.op
+                    ))
+                    current_equation = terms[indx]
+                    terms.clear()
+                    break
 
-            if isinstance(term1, self.__class__):
-                term1 = term1.compute(sheet, call_stack + [self])
-                if isinstance(term1, str):
-                    if len(call_stack) > 0:
-                        return f'{term1} {current_equation.term1} <-'
-                    else:
-                        first_cell = term1.split(' ')[3]
-                        raise RecursionError(f'{term1} {current_equation.term1} <- {first_cell} )')
-            elif isinstance(term2, self.__class__):
-                term2 = term2.compute(sheet, call_stack + [self])
-                if isinstance(term2, str):
-                    if len(call_stack) > 0:
-                        return f'{term2} {current_equation.term2} <-'
-                    else:
-                        first_cell = term2.split(' ')[3]
-                        raise RecursionError(f'{term2} {current_equation.term2} <- {first_cell} )')
+                terms[indx] = sheet.get(terms[indx], 0) if isinstance(terms[indx], str) else terms[indx]
+                terms[indx] = 0 if terms[indx] == '' else terms[indx]
 
-            result = operator(int(term1), int(term2))
-            if len(equation_stack) > 0:
-                term1, term2, operator = equation_stack.pop(-1)
-                term1 = term1 if term1 else result
-                term2 = term2 if term2 else result
-                current_equation = Equation(term1, term2, operator)
-                continue
-            else:
-                break
+                # Still str value in the term...
+                if isinstance(terms[indx], str):
+                    raise ValueError(
+                        f'Trying to evaluate formula "{self.setence}",' + \
+                        'got an "str" instead of "int": ' + \
+                        f'{current_equation.term1 if indx == 0 else current_equation.term2}=' + \
+                        f'"{terms[indx]}"'
+                    )
+
+                if isinstance(terms[indx], self.__class__):
+                    output = terms[indx].get_value(sheet, call_stack + [self])
+                    if isinstance(terms[indx], str):
+                        if len(call_stack) > 0:
+                            return f'{output} {terms[indx]}'
+                        else:
+                            first_cell = terms[indx].split(' ')[3]
+                            raise RecursionError(
+                                f'{output} {terms[indx]} <- {first_cell} )'
+                            )
+                    terms[indx] = output
+
+            if len(terms) > 0:
+                result = operator(int(terms[0]), int(terms[1]))
+                if len(equation_stack) > 0:
+                    terms[0], terms[1], operator = equation_stack.pop(-1)
+                    terms[0] = result if terms[0] is None else terms[0]
+                    terms[1] = result if terms[1] is None else terms[1]
+                    current_equation = Equation(*terms, operator)
+                    continue
+                else:
+                    break
         self.value = result
         return result
 
