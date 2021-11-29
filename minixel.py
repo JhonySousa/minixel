@@ -1,8 +1,8 @@
 from typing import Any, List, Dict, NamedTuple, NoReturn, Union, Tuple, Callable
 from operator import add, sub, mul, truediv as div
 from string import ascii_uppercase
+import argparse
 # import curses
-import sys
 import os
 import re
 
@@ -330,16 +330,6 @@ def read_csv(path: str) -> SheetType:
     return sheet
 
 
-def display_headings(col_sizes: List[int]) -> NoReturn:
-    """Display on the stdscr the headings using the
-    maximum space available.
-
-    Args:
-        col_sizes (List[int]): sizes of each column
-    """
-    ...
-
-
 def display_table(sheet: SheetType) -> NoReturn:
     """Display the table and the data in each cell.
 
@@ -354,12 +344,28 @@ def display_table(sheet: SheetType) -> NoReturn:
 
 def main():
     """Main function"""
-    path = ''
-    if len(sys.argv) > 1:
-        path = sys.argv[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', '--verbose', help='Show more information.', action='store_true')
+    parser.add_argument('-i', '--interactive', help='Enter interactive mode.', action='store_true')
+    parser.add_argument(
+        'input',
+        help="Input file to read data. If dosent exist, the program will create am empty file",
+    )
+    parser.add_argument(
+        '-o',
+        '--output',
+        help="Input file to send the data. If dosent exist, the program will create am empty file",
+        type=argparse.FileType('w')
+    )
+    args = parser.parse_args()
+    path = args.input
     if not os.path.exists(path):
-        sys.exit(1)
-    sheet = read_csv(path)
+        sheet = dict()
+        sheet['ColSpan'] = 3
+        sheet['RowSpan'] = 3
+    else:
+        sheet = read_csv(path)
+
     for el in sheet.values():
         if not isinstance(el, CellFormula):
             continue
