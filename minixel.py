@@ -35,10 +35,16 @@ class CellFormula:
     def __init__(self, cell: str) -> None:
         cell = cell.replace(' ', '')
         n_open_brackets = cell.count('(')
-        if not self.pattern.match(cell) or n_open_brackets != cell.count(')'):
-            return
+
+        self.value = None
         self.setence = cell
         self.formula: List[Equation] = list()
+
+        if not self.pattern.match(cell) or n_open_brackets != cell.count(')'):
+            raise ValueError(
+                'Something was wrong with this cell, check the number of' \
+                + 'open/closed backets and if the pattern match.'
+            )
 
         cell = CellFormula.tokerise_setence(cell)
 
@@ -59,7 +65,6 @@ class CellFormula:
                 cell.insert(start, sub_equation)
                 break
         self.formula: Equation = cell[0]
-        self.value = None
 
     @classmethod
     def tokerise_setence(cls, setence: str) -> List[str]:
@@ -71,9 +76,9 @@ class CellFormula:
         Returns:
             List[str]: tokens
         """
-        pattern = r'<CE>|([\+\-\*\/\^])|(\(?\)?)|(SUM|SUB|MUL|DIV)\(<CE>\)|(\d+)' \
-            .replace('<CE>', r'([A-Z]\d(?::\d){0,2})')
-        pattern = re.compile(pattern)
+        pattern = re.compile(
+            r'([\+\-\*\/\^])|(\(?\)?)|(SUM|SUB|MUL|DIV)\(([A-Z]\d+(?::\d+){0,2})\)|(\d+)'
+        )
         setence = [el for el in pattern.split(setence) if el and el != '=']
         return setence
 
@@ -92,7 +97,11 @@ class CellFormula:
         start = int(re.match(r'^[A-Z](\d+):\d+.*', term).group(1))
         end = int(re.match(r'^[A-Z]\d+:(\d+).*', term).group(1))
         inc = re.match(r'^[A-Z]\d+:\d+:(\d+)', term)
-        inc = 1 if not inc else inc.group(1)
+        inc = 1 if not inc else int(inc.group(1))
+
+        if start > end:
+            inc *= -1
+
         col = term[0]
         for row_index in range(start, end + 1, inc):
             yield f'{col}{row_index}'
@@ -110,7 +119,14 @@ class CellFormula:
             Equation: The chain of equations joined.
         """
         term_gen = cls.get_interval(term)
-        equation = Equation(next(term_gen), next(term_gen), operator)
+        try:
+            terms = dict()
+            terms[0] = next(term_gen)
+            terms[1] = next(term_gen)
+            equation = Equation(terms[0], terms[1], operator)
+        except StopIteration:
+            return Equation(terms.get(0, 0), terms.get(1, 0), operator)
+
         for t in term_gen:
             equation = Equation(t, equation, operator)
         return equation
@@ -239,10 +255,10 @@ class CellFormula:
         return result
 
     def __repr__(self) -> str:
-        if self.value:
-            return '='+str(self.value)
-        else:
+        if self.value is None:
             return self.setence
+        else:
+            return '='+str(self.value)
 
 
 CellType = Union[str, int, CellFormula]
@@ -298,7 +314,9 @@ def read_csv(path: str) -> SheetType:
     with open(path, 'r') as csv_file:
         content = csv_file.readlines()
     sheet = dict()
+    max_row = max_col = 0
     for row_index, row in enumerate(content):
+        max_row = max((max_row, row_index + 1))
         for col_index, cell in enumerate(row.split(',')):
             cell = cell.strip()
             if cell.isnumeric():
@@ -306,6 +324,9 @@ def read_csv(path: str) -> SheetType:
             elif cell.startswith('='):
                 cell = CellFormula(cell)
             sheet[index2coord(row_index, col_index)] = cell
+            max_col = max((max_col, col_index + 1))
+    sheet['ColSpan'] = max_col
+    sheet['RowSpan'] = max_row
     return sheet
 
 
