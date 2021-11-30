@@ -5,7 +5,7 @@ import os
 import re
 
 from cellformula import CellFormula
-from sheet import Sheet
+from table import Sheet
 
 
 
@@ -72,6 +72,19 @@ def main() -> NoReturn:
         el.compute(sheet)
     if args.verbose:
         sheet.display()
+    if args.output:
+        try:
+            out = [ [''] * sheet.size[1] for _ in range(sheet.size[0])]
+            for coord, element in sheet.items():
+                index = Sheet.coord2index(coord)
+                out[index[0]][index[1]] = str(element)
+            for index, lines in enumerate(map(','.join, out)):
+                if index:
+                    args.output.write('\n')
+                args.output.write(lines)
+        finally:
+            args.output.close()
+
 
 
 if __name__ == '__main__':
