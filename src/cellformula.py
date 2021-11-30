@@ -1,3 +1,5 @@
+"""Contains all the implementation to handle formulas."""
+
 from typing import Iterator, List, NoReturn, Optional, Union, NamedTuple, Callable, Any, Dict
 from operator import add, mul, sub, truediv as div
 import re
@@ -14,10 +16,32 @@ CellCallStack = NamedTuple(
         ('label', Optional[str])
     ]
 )
+CellType = Union[str, int, 'CellFormula']
 
 
 class CellFormula:
-    pattern = r"^=<OP>\(?<CE>\)?\(?(?:[\+\-\*\/\^]<OP>\(?<CE>\)*)+$"\
+    """The class used to represent the formula.
+    This implementation is kind of lazines, computing the results only
+    when it's needed.
+
+    # Attributes:
+        - value: The value. This should should not be used to get the value
+                Instead, see the get_value()
+        - formula: Has the Equation used to compute the value.
+        - setence: The str version of the Equation (is the same text passed when
+                is initializing).
+    # Methods:
+        - _validate_cell
+        - tokerise_setence
+        - get_interval
+        - map_operator
+        - parse_tokens
+        - get_value
+        - compute
+        - __repr__
+
+    """
+    pattern = r"^=<OP>\(?<CE>\)?\(?(?:[\+\-\*\/\^]<OP>\(?<CE>\)*)*$"\
         .replace('<OP>', r'(?:(?:DIV|MUL|SUB|SUM)(?=\([A-Z]\d+(?::\d+){1,2}\)))?')\
             .replace('<CE>', r'(?:[A-Z]\d+(?::\d+){0,2}|\d+)')
     pattern = re.compile(pattern)
@@ -39,7 +63,7 @@ class CellFormula:
         self.value = None
         self.formula: List[Equation] = list()
         self.setence = cell
-        
+
         CellFormula._validate_cell(cell)
         cell = CellFormula.tokerise_setence(cell)
 
@@ -85,8 +109,14 @@ class CellFormula:
             )
         pattern_match = re.search(r'[A-Z][\+\-\*\/\^]', cell)
         if pattern_match:
-            raise FormulaFormatError(cell, f'has an column as term of operation at {pattern_match.start(0)}')
-        if not cls.pattern.match(cell):
+            raise FormulaFormatError(
+                cell,
+                f'has an column as term of operation at {pattern_match.start(0)}'
+            )
+        pattern_match = re.match(r'^=(SUM|SUB|MUL|DIV)\([A-Z]\d+.*$', cell)
+        if pattern_match:
+            pass
+        elif not cls.pattern.match(cell):
             raise FormulaFormatError(cell)
 
     @classmethod
@@ -154,8 +184,8 @@ class CellFormula:
         except StopIteration:
             return Equation(terms.get(0, 0), terms.get(1, 0), operator)
 
-        for t in term_gen:
-            equation = Equation(t, equation, operator)
+        for term in term_gen:
+            equation = Equation(term, equation, operator)
         return equation
 
     @classmethod
@@ -173,17 +203,21 @@ class CellFormula:
             tokens.remove('(')
         if ')' in tokens:
             tokens.remove(')')
-        pattern = re.compile(r'(?:[A-Z]\d+)|\d+')
-        for op in cls.op_dict:
-            for _ in range(tokens.count(op)):
-                index_op = tokens.index(op)
 
-                if len(op) > 1:
+        if re.match(r'[A-Z]\d+$', tokens[0]) and len(tokens) == 0:
+            return Equation(term1=0, term2=tokens[0], op=add)
+
+        pattern = re.compile(r'(?:[A-Z]\d+)|\d+')
+        for operator in cls.op_dict:
+            for _ in range(tokens.count(operator)):
+                index_op = tokens.index(operator)
+
+                if len(operator) > 1:
                     tokens.insert(
                         index_op + 1,
                         CellFormula.map_operator(
                             tokens.pop(index_op + 1),
-                            cls.op_dict[op]
+                            cls.op_dict[operator]
                         )
                     )
                     tokens.pop(index_op)
@@ -202,7 +236,7 @@ class CellFormula:
                 tokens.pop(index_op - 1) # Delete the term 1
                 tokens.pop(index_op - 1) # Delete the operator
                 tokens.pop(index_op - 1) # Delete the term 2
-                tokens.insert(index_op - 1, Equation(term1, term2, cls.op_dict[op]))
+                tokens.insert(index_op - 1, Equation(term1, term2, cls.op_dict[operator]))
         return tokens[0]
 
     def get_value(self, sheet: Dict[str, Any], call_stack=None) -> int:
@@ -224,6 +258,21 @@ class CellFormula:
             self, sheet: Dict[str, Any],
             call_stack:Optional[List[CellCallStack]]=None
     ) -> int:
+        """Compute the value of this cell (formula)
+
+        Args:
+            sheet (Dict[str, Any]): The table where this cell is located.
+            call_stack (Optional[List[CellCallStack]], optional): The stack of calls.
+            Defaults to None.
+
+        Raises:
+            CyclicError: Occours when a list of cells depends on each other.
+            ValueError: Occours when tries to do an operation over an cell that
+            has an str.
+
+        Returns:
+            int: The values.
+        """
         call_stack = call_stack if call_stack else [CellCallStack(self, None)]
         if [call[0] for call in call_stack].count(self) > 1:
             raise CyclicError([call[1] for call in call_stack])
@@ -298,6 +347,7 @@ class CellFormulaError(Exception):
     def __str__(self) -> str:
         return f'This formula ({self.formula}) {self.message}.'
 
+
 class FormulaFormatError(CellFormulaError):
     """Error that occours when the given formula dosent match.
     """
@@ -312,6 +362,10 @@ class TokenrizeFormulaError(CellFormulaError):
 
 
 class CyclicError(CellFormulaError):
+    """This occour when any cell calls another cell that
+    depends on the same cell that is called. Example, A1
+    depends on B1, that depends on C1, and C1 depends on A1:
+    at the end of the day, A1 ends depending on itself."""
     def __init__(self, call_stack: List[str]) -> None:
         self.call_stack = call_stack
         self.call_stack.append(self.call_stack[0])
