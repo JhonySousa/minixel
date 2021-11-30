@@ -65,29 +65,29 @@ class CellFormula:
     def _validate_cell(cls, cell:str) -> List[str]:
         open_brackets = cell.count('(')
         clos_brackets = cell.count(')')
-        pattern_match = re.match(r'(SUM|SUB|DIV|MUL)(?!\([A-Z]\d+(?::\d+){1,2}\))', cell)
+        pattern_match = re.search(r'(SUM|SUB|DIV|MUL)(?!\([A-Z]\d+(?::\d+){1,2}\))', cell)
         if pattern_match:
             raise FormulaFormatError(
                 cell,
                 f"has an interval operator unformated {pattern_match.group(0)}" \
-                + f" at {pattern_match.start(0)} position."
+                + f" at {pattern_match.start(0)} position"
             )
         if open_brackets > clos_brackets:
-            raise FormulaFormatError(cell, "Unmatched '('.")
+            raise FormulaFormatError(cell, "Unmatched '('")
         if open_brackets < clos_brackets:
-            raise FormulaFormatError(cell, "Unmatched ')'.")
-        if not cls.pattern.match(cell):
-            raise FormulaFormatError(cell)
+            raise FormulaFormatError(cell, "Unmatched ')'")
         pattern_match = re.search(r'(?<!(?:SUM|SUB|DIV|MUL)\()([A-Z]\d+(?::\d+)+)', cell)
         if pattern_match:
             raise FormulaFormatError(
                 cell,
-                f'has an interval outside of any interval operator {pattern_match.group(1)}' \
-                + f' at {pattern_match.start(1)}.'
+                f'has an interval outside of any interval operator ({pattern_match.group(1)})' \
+                + f' at {pattern_match.start(1)}'
             )
         pattern_match = re.search(r'[A-Z][\+\-\*\/\^]', cell)
         if pattern_match:
-            raise FormulaFormatError(cell, f'has an col as term of operation at {pattern_match.start(0)}.')
+            raise FormulaFormatError(cell, f'has an column as term of operation at {pattern_match.start(0)}')
+        if not cls.pattern.match(cell):
+            raise FormulaFormatError(cell)
 
     @classmethod
     def tokerise_setence(cls, setence: str) -> List[str]:
@@ -269,7 +269,7 @@ class CellFormula:
                     terms[indx] = output
 
             if len(terms) > 0:
-                result = operator(int(terms[0]), int(terms[1]))
+                result = operator(terms[0], terms[1])
                 if len(equation_stack) > 0:
                     terms[0], terms[1], operator = equation_stack.pop(-1)
                     terms[0] = result if terms[0] is None else terms[0]
