@@ -204,7 +204,7 @@ class CellFormula:
         if ')' in tokens:
             tokens.remove(')')
 
-        if re.match(r'[A-Z]\d+$', tokens[0]) and len(tokens) == 0:
+        if re.match(r'[A-Z]\d+$', tokens[0]) and len(tokens) == 1:
             return Equation(term1=0, term2=tokens[0], op=add)
 
         pattern = re.compile(r'(?:[A-Z]\d+)|\d+')
@@ -274,7 +274,7 @@ class CellFormula:
             int: The values.
         """
         call_stack = call_stack if call_stack else [CellCallStack(self, None)]
-        if [call[0] for call in call_stack].count(self) > 1:
+        if [call.cell for call in call_stack].count(self) > 1:
             raise CyclicError([call[1] for call in call_stack])
 
         current_equation = self.formula
@@ -301,8 +301,7 @@ class CellFormula:
                     break
 
                 if isinstance(terms[indx], str):
-                    terms[indx] = sheet.get(terms[indx])
-                terms[indx] = 0 if terms[indx] == '' else terms[indx]
+                    terms[indx] = sheet.get(terms[indx], 0)
 
                 # Still str value in the term...
                 if isinstance(terms[indx], str):
@@ -313,8 +312,14 @@ class CellFormula:
                         f'"{terms[indx]}"'
                     )
 
+                # Chekc if the term is another CellFormula...
                 if isinstance(terms[indx], self.__class__):
-                    output = terms[indx].get_value(sheet, call_stack + [])
+                    call_stack.append(CellCallStack(
+                        cell=terms[indx],
+                        label=current_equation.term2 if indx else current_equation.term1
+                    ))
+                    output = terms[indx].get_value(sheet, call_stack)
+                    call_stack.pop()
                     terms[indx] = output
 
             if len(terms) > 0:
@@ -367,8 +372,8 @@ class CyclicError(CellFormulaError):
     depends on B1, that depends on C1, and C1 depends on A1:
     at the end of the day, A1 ends depending on itself."""
     def __init__(self, call_stack: List[str]) -> None:
-        self.call_stack = call_stack
-        self.call_stack.append(self.call_stack[0])
+        self.call_stack = call_stack[1:]
+        self.call_stack.insert(0, self.call_stack[-1])
         super().__init__("", "")
 
     def __str__(self) -> str:
