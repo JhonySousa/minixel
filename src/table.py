@@ -22,7 +22,7 @@ class Sheet(UserDict):
     def __init__(self, **kwargs: CellType) -> NoReturn:
         super().__init__(**kwargs)
         self._size: Optional[Tuple[int, int]] = None
-        self._col_sizes: Dict[str, int] = dict()
+        self._col_sizes: Dict[int, int] = dict()
 
     @property
     def size(self) -> Tuple[int, int]:
@@ -37,7 +37,7 @@ class Sheet(UserDict):
         return self._size
 
     @property
-    def col_sizes(self) -> Dict[str, int]:
+    def col_sizes(self) -> Dict[int, int]:
         """How many spaces that column needs."""
         if not self._col_sizes:
             for key, value in self.items():
